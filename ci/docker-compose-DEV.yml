@@ -1,0 +1,164 @@
+version: '3.8'
+
+services:
+  computerclub-db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: computer_club_db
+    command: -c 'max_connections=300'
+    volumes:
+      - computerclub_db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+      
+  keycloak-db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql/data
+    ports:
+      - "5442:5432"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db/keycloak 
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      #KC_LOG: console,syslog
+      #KC_LOG_LEVEL: debug
+      #KC_LOG_CONSOLE_LEVEL: debug
+      KC_DYN_ATTR_ADDER_REALM_NAME: computer-club-realm
+      KC_DYN_ATTR_ADDER_GROUP_ID: 1baa9907-f850-42b2-b4b9-8d55606dcf00
+      KC_DYN_ATTR_ADDER_CUSTOM_ATTRIBUTES: clubId=1;status=True
+      KC_PROXY: passthrough
+      KEYCLOAK_FRONTEND_URL: https://dev-auth.mayakarena.ru
+      KC_HOSTNAME_URL: https://dev-auth.mayakarena.ru
+      KC_HOSTNAME_ADMIN_URL: https://dev-auth.mayakarena.ru
+      KC_HOSTNAME_STRICT: true
+      PROXY_ADDRESS_FORWARDING: true
+      KC_HTTP_ENABLED: true
+    volumes:
+      - ./../keycloak/keycloak_realm_dev.json:/opt/keycloak/data/import/keycloak_realm_dev.json
+      - ./../keycloak/themes/keycloak-theme-for-kc-22-to-25.jar:/opt/keycloak/providers/keycloak-theme-for-kc-22-to-25.jar
+      - ./../keycloak/themes/base-email-theme-with-fixed-system-name/:/opt/keycloak/themes/base-email-theme-with-fixed-system-name
+      - ./../keycloak/plugins/plugin-for-adding-custom-attributes-1.0-SNAPSHOT.jar:/opt/keycloak/providers/plugin-for-adding-custom-attributes-1.0-SNAPSHOT.jar
+    depends_on:
+      - keycloak-db
+    ports:
+      - "8080:8080"
+      - "8787:8787"
+    command:
+      - start-dev
+      - --import-realm
+      - --hostname
+      - https://dev-auth.mayakarena.ru
+
+  computerclub:
+    build: 
+      context: ./..
+      dockerfile: ./ComputerClub.API/Dockerfile
+    depends_on:
+      computerclub-db:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      logstash:
+        condition: service_healthy
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=computerclub-db;Database=computer_club_db;Username=user;Password=password;Pooling=true;MinPoolSize=0;MaxPoolSize=70;
+      - Authentication:Authority=http://keycloak:8080/realms/computer-club-realm
+      - Authentication:Issuers=http://localhost:8080/realms/computer-club-realm;http://10.0.2.2:8080/realms/computer-club-realm
+      - Logstash:Host=tcp://logstash
+      - Logstash:Port=5000
+      - Smtp:From:Name=Маяк Арена
+      - Smtp:From:Address=robot@mayakarena.ru
+      - Smtp:Server:Port=587
+      - Smtp:Server:Host=postbox.cloud.yandex.net
+      - Smtp:Server:Username=YCAJEsDUN4omFeDyD9lDsV9U7
+      - Smtp:Server:Password=BJl8J/Z8X2VdKUeoeUhs3lQhI1M0hDJfptaCXvNy7wrk
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://*:80
+      - AllowedHosts=*
+    ports:
+      - "5010:80"
+      
+      
+  elasticsearch:
+    image: elasticsearch:7.17.24
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      
+  logstash:
+    image: logstash:7.17.24
+    volumes:
+      - ./../logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    ports:
+      - "5000:5000"
+      - "9600:9600"
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9600/_node/stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+      
+  kibana:
+    image: kibana:7.17.24
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+
+  computerclubtests:
+    build: 
+      context: ./..
+      dockerfile: ./ComputerClub.Tests/Dockerfile
+    depends_on:
+      - computerclub
+    environment:
+      - IS_RUNNING_ON_CI=true
+      - TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
+      - ConnectionStrings__DefaultConnection=Host=computerclub-db;Database=computer_club_db;Username=user;Password=password
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: postgres@example.com
+      PGADMIN_DEFAULT_PASSWORD: passwd
+      #PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_LISTEN_PORT: 80
+      PGADMIN_SERVER_JSON_FILE: '/pgadmin-servers.json'
+    ports:
+      - "8090:80"
+    depends_on:
+      - keycloak-db
+      - computerclub-db
+    volumes:
+      - ./../pgadmin/pgadmin-servers.json:/pgadmin-servers.json
+      - pgadmin-data:/var/lib/pgadmin
+
+volumes:
+  computerclub_db_data:
+  keycloak_db_data:
+  es_data:
+  pgadmin-data:

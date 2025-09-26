@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "CRUD DB",
+      "Group": "Servers",
+      "Host": "crud-db",
+      "Port": 5432,
+      "MaintenanceDB": "crud_db",
+      "Username": "user",
+      "SSLMode": "prefer"
+    },
+  }
+}
