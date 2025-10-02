@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  crud-db:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: crud_db
+    command: -c 'max_connections=300'
+    ports:
+      - "5432:5432"
+      
+  crud:
+    build: 
+      context: ./..
+      dockerfile: ./CRUD.API/Dockerfile
+    depends_on:
+      crud-db:
+        condition: service_started
+#       logstash:
+#         condition: service_healthy
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=crud-db;Database=crud_db;Username=user;Password=password;Pooling=true;MinPoolSize=0;MaxPoolSize=70;
+      - Logstash:Host=tcp://logstash
+      - Logstash:Port=5000
+      - Serilog:MinimumLevel:Default=Warning
+      - Serilog:MinimumLevel:Override:Microsoft=Warning
+      - Serilog:MinimumLevel:Override:System=Warning
+      - Smtp:From:Name=Маяк Арена
+      - Smtp:From:Address=robot@mayakarena.ru
+      - Smtp:Server:Port=587
+      - Smtp:Server:Host=postbox.cloud.yandex.net
+      - Smtp:Server:Username=YCAJEsDUN4omFeDyD9lDsV9U7
+      - Smtp:Server:Password=BJl8J/Z8X2VdKUeoeUhs3lQhI1M0hDJfptaCXvNy7wrk
+      - ASPNETCORE_URLS=http://*:80
+    ports:
+      - "5010:80"
+      
+
+  computerclubtests:
+    build: 
+      context: ./..
+      dockerfile: ./CRUD.Tests/Dockerfile
+    depends_on:
+      - crud
+    environment:
+      - IS_RUNNING_ON_CI=true
+      - TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
+      - ConnectionStrings__DefaultConnection=Host=computerclub-db;Database=crud;Username=user;Password=password
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
